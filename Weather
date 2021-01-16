@@ -1,0 +1,11 @@
+import random, time
+
+
+def temp(b, shmem):
+    while (True):
+        t = int(random.random() * 40)+1
+        print("Temperature of the Day: ", t)
+        with shmem.get_lock() : #get lock on the shared memory before writing
+            shmem.value = t
+        b.wait()
+        time.sleep(1)

@@ -1,1 +1,105 @@
+import random, signal, os, time
+import sysv_ipc
+from multiprocessing import Process, Barrier, Lock, Value
+import Weather
+import concurrent.futures
 
+price=1
+global money
+global power
+priceLock = Lock()
+rec=0
+rev=0
+lockd=0
+temp=0
+eTraded=0
+
+
+def handler(sig, frame):
+    global rec
+    global lockd
+    if sig==signal.SIGUSR2 :
+        rec= not rec
+        if(rec==1) :
+            print("Recession happened")
+        else :
+            print("Recession finished")
+    elif sig==signal.SIGINT :
+        lockd= not lockd
+        if(lockd==1) :
+            print("Lockdown happened")
+        else :
+            print("Lockdown finished")
+    updatePrice()
+
+signal.signal(signal.SIGINT, handler)     #Lockdown change message
+signal.signal(signal.SIGUSR2, handler)    #recession change message
+
+def Market(b, key2,shmem):
+    global temp
+    i=1
+    econProc = Process(target=economics, args=(b, ))
+    econProc.start()
+    try:
+        mq= sysv_ipc.MessageQueue(key=key2)
+    except sysv_ipc.ExistentialError:
+        print("Cannot connect to message queue", key2)
+
+    while (True):
+        b.wait()
+        print("Day number: ", i)
+        i+=1
+        time.sleep(2)
+        with shmem.get_lock():  #read temperature and update price
+            temp= shmem.value
+        updatePrice()
+
+        """"
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [executor.submit(Transaction, mq)]
+            for future in concurrent.futures.as_completed(futures):
+                print(future.result())
+        """
+
+def economics(b):
+        while (True):
+            time.sleep(2)
+            recessionChange = random.choice([True, False, False, False])
+            if (recessionChange):
+                os.kill(os.getppid(), signal.SIGUSR2)
+            lockdownChange = random.choice([True, False, False, False])
+            if (lockdownChange) :
+                os.kill(os.getppid(), signal.SIGINT)
+            b.wait()
+
+#external factor1=Revolution SIGUSR1  alfa1
+#external factor2=Recession  SIGUSR2  alfa2
+#external factor3=Lockdown   SIGINT   alfa3
+#internal factor1=Temperature ShMem   beta1
+#internal factor2=Amount of energy sold (during the day)  beta2
+def updatePrice():
+    gamma = 0.6
+    alfa1 = 1.0
+    alfa2 = 0.6
+    alfa3 = 0.4
+    beta1 = 0.01
+    beta2 = 0.8
+    with priceLock:
+        global price
+        global rev
+        #print(rev)
+        price = gamma*price+alfa1*rev+alfa2*rec+alfa3*lockd+beta1*temp+beta2*eTraded
+        print("Updated price: ", price)
+
+if __name__ == '__main__':
+    b = Barrier(3)
+    key2 = 130
+    mq = sysv_ipc.MessageQueue(key2, sysv_ipc.IPC_CREAT)
+    #shm_a = shared_memory.SharedMemory(name="sharedmemory", create=True, size=4) #pass to manager
+    #with Manager() as manager:
+        #shmem=manager('i',0)
+    shmem=Value('i', 0, lock=True)
+    market = Process(target=Market, args=(b, key2, shmem))
+    weather= Process(target=Weather.temp, args= (b, shmem))
+    market.start()
+    weather.start()
